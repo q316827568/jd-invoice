@@ -12,3 +12,4 @@ invoices/
 invoices-all/
 *.json
 !package*.json
+venv/
