@@ -1,44 +1,35 @@
-name: Build and Release Node.js Project
+name: CI Check
 
 on:
   push:
     branches:
       - master
+  pull_request:
+    branches:
+      - master
 
 jobs:
-  build-and-release:
+  check:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          node-version: 14.x
+          python-version: '3.11'
 
-      - name: Get version from package.json
-        id: get-version
-        run: echo "PACKAGE_VERSION=$(cat package.json | jq -r .version)" >> "$GITHUB_ENV"
+      - name: Install Python dependencies
+        run: |
+          pip install flask flask-cors pymupdf pdf2image Pillow
 
-      - name: Install dependencies and build
-        run: npm ci && npm run build
+      - name: Check HTML validity
+        run: |
+          test -f 报销明细管理.html && echo "✅ HTML 文件存在" || exit 1
+          grep -q "报销明细管理" 报销明细管理.html && echo "✅ HTML 内容正确" || exit 1
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: index-macos
-          path: dist/index-macos
-
-      - name: Create a release
-        uses: 'marvinpinto/action-automatic-releases@latest'
-        env:
-          TAG_NAME: ${{ env.PACKAGE_VERSION }}
-        with:
-          repo_token: '${{ secrets.GITHUB_TOKEN }}'
-          automatic_release_tag: '${{ env.TAG_NAME }}'
-          prerelease: true
-          title: 'Development Build'
-          files: |
-            dist/index-macos
+      - name: Check Python server syntax
+        run: |
+          python -m py_compile expense-server.py && echo "✅ Python 语法正确" || exit 1
