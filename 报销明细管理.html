@@ -354,12 +354,19 @@
     </div>
 
     <!-- 操作按钮 -->
-    <div class="actions-bar">
+    <div class="actions-bar" id="actionsBarPending" style="display:flex">
         <button class="btn" onclick="selectAll()">全选</button>
         <button class="btn" onclick="invertSelect()">反选</button>
         <button class="btn btn-primary" onclick="submitReimburse()">报销</button>
         <button class="btn" onclick="exportCSV()">导出数据</button>
         <button class="btn" onclick="importData()">导入数据</button>
+    </div>
+    <div class="actions-bar" id="actionsBarProgress" style="display:none">
+        <button class="btn btn-primary" onclick="mergeAndDownload()">合并打印</button>
+        <button class="btn" onclick="exportCSV()">导出数据</button>
+    </div>
+    <div class="actions-bar" id="actionsBarDone" style="display:none">
+        <button class="btn" onclick="exportCSV()">导出数据</button>
     </div>
 
     <!-- 数据表格 -->
@@ -589,6 +596,12 @@ function switchTab(tab) {
     currentTab = tab;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+    
+    // 切换操作栏
+    document.getElementById('actionsBarPending').style.display = tab === 'pending' ? 'flex' : 'none';
+    document.getElementById('actionsBarProgress').style.display = tab === 'progress' ? 'flex' : 'none';
+    document.getElementById('actionsBarDone').style.display = tab === 'done' ? 'flex' : 'none';
+    
     renderTable();
 }
 
@@ -680,6 +693,23 @@ async function singleReimburse(orderId) {
         await loadAllData();
     } catch (err) {
         alert('报销提交失败: ' + err.message);
+    }
+}
+
+// ============ 合并打印 ============
+async function mergeAndDownload() {
+    const count = countByStatus('报销中');
+    if (count === 0) {
+        alert('没有报销中的订单');
+        return;
+    }
+    if (!confirm(`将合并所有"报销中"订单的发票为汇总 PDF，确认下载？`)) return;
+    
+    try {
+        // 直接打开合并下载链接
+        window.open('/api/expenses/merge-invoices', '_blank');
+    } catch (err) {
+        alert('合并失败: ' + err.message);
     }
 }
 

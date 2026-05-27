@@ -7,12 +7,17 @@ import os
 import json
 import csv
 import re
+import io
 import shutil
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 import pymupdf  # PyMuPDF
+
+# 发票合并需要
+from pdf2image import convert_from_path
+from PIL import Image
 
 app = Flask(__name__)
 CORS(app)
@@ -421,6 +426,106 @@ def export_data():
     
     result = enrich_orders(orders, merged_invoices, reimburse, product_names)
     return jsonify(result)
+
+
+# ==================== 发票合并 ====================
+A4_W, A4_H = 2480, 3508  # A4 @ 300dpi
+A4_TOLERANCE = 80
+
+
+def is_a4_like(img):
+    return abs(img.width - A4_W) + abs(img.height - A4_H) < A4_TOLERANCE
+
+
+@app.route('/api/expenses/merge-invoices', methods=['GET'])
+def merge_invoices():
+    """合并所有报销中的订单的发票为汇总 PDF（两张一页）"""
+    orders = load_csv_data()
+    invoices_db = load_invoices_db()
+    scanned = scan_invoice_files()
+    reimburse_db = load_reimburse_db()
+
+    # 合并发票数据
+    all_invoices = {}
+    for oid, info in scanned.items():
+        all_invoices[oid] = info
+    for oid, info in invoices_db.items():
+        if oid in all_invoices:
+            all_invoices[oid].update(info)
+        else:
+            all_invoices[oid] = info
+
+    # 收集报销中且有发票的订单 PDF 路径
+    pdf_files = []
+    for order in orders:
+        oid = order['orderId']
+        if reimburse_db.get(oid, {}).get('status') != '报销中':
+            continue
+        inv = all_invoices.get(oid)
+        if not inv or not inv.get('file'):
+            continue
+        fp = Path(inv['file'])
+        if fp.exists() and fp.suffix.lower() == '.pdf':
+            pdf_files.append(fp)
+
+    if not pdf_files:
+        return jsonify({'error': '没有可合并的发票（请先将订单设为"报销中"并上传发票）'}), 400
+
+    # 每张 PDF 转图片
+    images = []  # [(filename, PIL.Image)]
+    for fp in sorted(pdf_files, key=lambda p: p.stat().st_mtime):
+        try:
+            pages = convert_from_path(str(fp), dpi=300)
+            if pages:
+                images.append((fp.name, pages[0]))
+        except Exception as e:
+            print(f"  ⚠️ {fp.name}: {e}")
+
+    if not images:
+        return jsonify({'error': '发票转换失败'}), 500
+
+    a4_pages = [(n, im) for n, im in images if is_a4_like(im)]
+    non_a4 = [(n, im) for n, im in images if not is_a4_like(im)]
+
+    output_pages = []
+    margin, half_h = 60, A4_H // 2
+
+    # 非A4：两两拼到 A4
+    for i in range(0, len(non_a4), 2):
+        canvas = Image.new("RGB", (A4_W, A4_H), "white")
+        
+        name, im = non_a4[i]
+        scale = min((A4_W - margin * 2) / im.width, (half_h - margin * 2) / im.height)
+        nw, nh = int(im.width * scale), int(im.height * scale)
+        im_top = im.resize((nw, nh), Image.LANCZOS)
+        canvas.paste(im_top, ((A4_W - nw) // 2, half_h + (half_h - nh) // 2))
+
+        if i + 1 < len(non_a4):
+            name2, im2 = non_a4[i + 1]
+            scale2 = min((A4_W - margin * 2) / im2.width, (half_h - margin * 2) / im2.height)
+            nw2, nh2 = int(im2.width * scale2), int(im2.height * scale2)
+            im_bot = im2.resize((nw2, nh2), Image.LANCZOS)
+            canvas.paste(im_bot, ((A4_W - nw2) // 2, (half_h - nh2) // 2))
+
+        output_pages.append(canvas)
+
+    # A4：独占一页
+    for _, im in a4_pages:
+        output_pages.append(im)
+
+    if not output_pages:
+        return jsonify({'error': '没有可合并的页面'}), 500
+
+    buf = io.BytesIO()
+    output_pages[0].save(buf, format="PDF", save_all=True, append_images=output_pages[1:], resolution=300)
+    buf.seek(0)
+
+    return send_file(
+        buf,
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name='报销发票汇总.pdf'
+    )
 
 
 @app.route('/', methods=['GET'])
