@@ -8,6 +8,8 @@
     "build": "babel src --out-dir dist && pkg ./dist/index.js --public --out-path=dist"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
+    "playwright": "^1.60.0",
     "puppeteer": "^19.6.1",
     "query-string": "^6.9.0"
   },

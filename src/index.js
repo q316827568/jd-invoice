@@ -26,8 +26,11 @@ async function init() {
   await ensureDirectoryExists(path.resolve(__dirname, './file'))
   browser = await puppeteer.launch({
     headless: false,
+    executablePath: process.env.CHROME_PATH || undefined,
     defaultViewport: {
-      width: 1440,
+      width: 1200,
+    x: 100,
+    y: 100,
       height: 800,
     },
   })
