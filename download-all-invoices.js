@@ -115,23 +115,79 @@ async function downloadAllInvoices() {
         const filename = `${invoiceTitle}-${orderId}.pdf`;
         const filepath = path.join(downloadDir, filename);
         
-        // 下载
-        await new Promise((resolve, reject) => {
-          const file = fs.createWriteStream(filepath);
-          https.get(downloadUrl, response => {
-            response.pipe(file);
-            file.on('finish', () => {
-              file.close();
-              console.log(`  ✅ 已下载: ${filename}`);
-              downloaded++;
-              resolve();
-            });
-          }).on('error', err => {
-            fs.unlinkSync(filepath);
-            console.log(`  ❌ 下载失败: ${err.message}`);
-            resolve();
+        // 使用 puppeteer 的已登录页面下载，而不是独立的 https 请求
+        try {
+          // 方法1: 直接在页面上点击下载按钮
+          const clicked = await invoicePage.evaluate(() => {
+            const btn = document.querySelector('.download-trigger') || 
+                       document.querySelector('a[href$=".pdf"]');
+            if (btn) {
+              btn.click();
+              return true;
+            }
+            return false;
           });
-        });
+          
+          if (clicked) {
+            // 等待下载
+            await new Promise(r => setTimeout(r, 3000));
+            console.log(`  ✅ 已触发下载: ${filename}`);
+            downloaded++;
+          } else {
+            // 方法2: 使用页面带的 cookie 下载
+            const cookies = await invoicePage.cookies();
+            const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+            
+            await new Promise((resolve, reject) => {
+              const file = fs.createWriteStream(filepath);
+              const url = new URL(downloadUrl);
+              const options = {
+                hostname: url.hostname,
+                path: url.pathname + url.search,
+                headers: {
+                  'Cookie': cookieString,
+                  'Referer': invoicePage.url(),
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+              };
+              
+              https.get(options, response => {
+                // 处理重定向
+                if (response.statusCode === 302 || response.statusCode === 301) {
+                  const redirectUrl = response.headers.location;
+                  https.get(redirectUrl, resp => {
+                    resp.pipe(file);
+                    file.on('finish', () => {
+                      file.close();
+                      console.log(`  ✅ 已下载: ${filename}`);
+                      downloaded++;
+                      resolve();
+                    });
+                  }).on('error', err => {
+                    fs.unlinkSync(filepath);
+                    console.log(`  ❌ 下载失败: ${err.message}`);
+                    resolve();
+                  });
+                  return;
+                }
+                
+                response.pipe(file);
+                file.on('finish', () => {
+                  file.close();
+                  console.log(`  ✅ 已下载: ${filename}`);
+                  downloaded++;
+                  resolve();
+                });
+              }).on('error', err => {
+                fs.unlinkSync(filepath);
+                console.log(`  ❌ 下载失败: ${err.message}`);
+                resolve();
+              });
+            });
+          }
+        } catch (err) {
+          console.log(`  ❌ 下载失败: ${err.message}`);
+        }
         
       } else {
         // 检查是否是未开票
